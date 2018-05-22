@@ -334,7 +334,8 @@ public:
     }
 
     ~Benchmark() {
-        delete kv_;
+        //delete kv_;
+        pmemkv::KVEngine::Close(kv_);
     }
 
     void Run() {
