@@ -14,18 +14,8 @@
 using namespace std;
 using namespace pmemkv;
 
-uint64_t rdtscp(void) {
-    uint32_t lo, hi;
-    __asm__ volatile ("rdtscp"
-        : "=a" (lo), "=d" (hi)
-        :
-        : "%rcx");
-    return (uint64_t)lo | (((uint64_t)hi) << 32);
-}
-
 int main(int argc, char **argv) {
 
-    uint64_t t1, t2;
     if (argc != 3) {
         cout << "Benchmark requires 3 arguments: " << endl;
         cout << "- Trace path (list of keys)" << endl;
@@ -56,7 +46,6 @@ int main(int argc, char **argv) {
     value[valueSize - 1] = '\0';
 
     // Open store
-    t1 = rdtscp();
     KVEngine* kv = KVEngine::Open(KV_ENGINE, POOL_PATH, POOL_SIZE);
 
     // Run benchmark
@@ -65,11 +54,8 @@ int main(int argc, char **argv) {
         assert(s == OK);
     }
 
-    KVEngine::Close(kv);
-    t2 = rdtscp();
-
     // Cleanup
-    cout << "Total," << (t2 - t1) << endl;
+    KVEngine::Close(kv);
     keys.clear();
     free(value);
 
