@@ -10,7 +10,7 @@ environment = 'PMEM_IS_PMEM_FORCE=1 taskset -c 0'
 benchmark = './bin/pmemkv_latency'
 
 results = []
-for valueSize in [1024, 2048, 4096, 8192]:
+for valueSize in [512, 1024, 2048, 4096, 8192]:
 
     # Prepare benchmark
     command = environment + ' ' + benchmark + ' ' + tracePath + ' ' + str(valueSize)
@@ -68,5 +68,6 @@ for valueSize in [1024, 2048, 4096, 8192]:
         for percents in [durability, logging, locking, allocation]:
             result.append(numpy.average(percents))
         results.append(result)
+        print(result)
 
-print(results)
+# TODO draw stacked bar chart using *results*
