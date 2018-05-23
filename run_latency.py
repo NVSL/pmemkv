@@ -8,27 +8,69 @@ poolPath = '/mnt/ram/pmemkv'
 tracePath = 'traces/ycsb-a.txt'
 environment = 'PMEM_IS_PMEM_FORCE=1 taskset -c 0'
 benchmark = './bin/pmemkv_latency'
+repeatLimit = 3
 
-results = []
-for valueSize in [512, 1024, 2048, 4096, 8192]:
+loadResults = []
+updateResults = []
+for valueSize in [64, 128, 256, 512, 1024, 2048, 4096, 8192]:
 
     # Prepare benchmark
     command = environment + ' ' + benchmark + ' ' + tracePath + ' ' + str(valueSize)
     mustRepeat = True
+    repeats = 0
+    threshold = 0.1 # 0.1%
 
     while mustRepeat:
 
+        if repeats == repeatLimit:
+            threshold = threshold * 2
+            print('Failed to reach the accuracy threshold, increasing threshold to ' + str(threshold))
+            repeats = 0
+        repeats = repeats + 1
+
         mustRepeat = False
-        durability = []
-        logging = []
-        locking = []
-        allocation = []
+        loadDurability = []
+        loadLogging = []
+        loadLocking = []
+        loadAllocation = []
+        updateDurability = []
+        updateLogging = []
+        updateLocking = []
+        updateAllocation = []
 
         for attempt in range(0, 5):
             # Clean environment
             if os.path.isfile(poolPath):
                 os.remove(poolPath)
 
+            # Step 1
+            # Populate kv-store
+            p = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
+            (out, err) = p.communicate()
+            status = p.wait()
+            if status != 0:
+                print('Failed to populate kv-store!')
+                sys.exit(1)
+
+            # Parse output
+            lines = out.splitlines()
+
+            totalCycles = int(lines[6].split(',')[1])
+            durCycles = int(lines[1].split(',')[1])
+            logCycles = int(lines[2].split(',')[1])
+            lockCycles = int(lines[3].split(',')[1])
+            allocCycles = int(lines[4].split(',')[1])
+
+            durPercent = 100 * float(durCycles) / totalCycles
+            loadDurability.append(durPercent)
+            logCycles = 100 * float(logCycles) / totalCycles
+            loadLogging.append(logCycles)
+            lockCycles = 100 * float(lockCycles) / totalCycles
+            loadLocking.append(lockCycles)
+            allocCycles = 100 * float(allocCycles) / totalCycles
+            loadAllocation.append(allocCycles)
+
+            # Step 2
             # Run benchmark
             p = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
             (out, err) = p.communicate()
@@ -47,17 +89,17 @@ for valueSize in [512, 1024, 2048, 4096, 8192]:
             allocCycles = int(lines[4].split(',')[1])
 
             durPercent = 100 * float(durCycles) / totalCycles
-            durability.append(durPercent)
+            updateDurability.append(durPercent)
             logCycles = 100 * float(logCycles) / totalCycles
-            logging.append(logCycles)
+            updateLogging.append(logCycles)
             lockCycles = 100 * float(lockCycles) / totalCycles
-            locking.append(lockCycles)
+            updateLocking.append(lockCycles)
             allocCycles = 100 * float(allocCycles) / totalCycles
-            allocation.append(allocCycles)
+            updateAllocation.append(allocCycles)
 
         # Check if results are accurate
-        for percents in [durability, logging, locking, allocation]:
-            if numpy.std(percents) > 0.1:
+        for percents in [loadDurability, loadLogging, loadLocking, loadAllocation, updateDurability, updateLogging, updateLocking, updateAllocation]:
+            if numpy.std(percents) > threshold:
                 mustRepeat = True
                 break
         if mustRepeat:
@@ -65,9 +107,14 @@ for valueSize in [512, 1024, 2048, 4096, 8192]:
 
         # Compute average percentages
         result = [valueSize]
-        for percents in [durability, logging, locking, allocation]:
+        for percents in [loadDurability, loadLogging, loadLocking, loadAllocation]:
             result.append(numpy.average(percents))
-        results.append(result)
+        loadResults.append(result)
+        print(result)
+        result = [valueSize]
+        for percents in [updateDurability, updateLogging, updateLocking, updateAllocation]:
+            result.append(numpy.average(percents))
+        updateResults.append(result)
         print(result)
 
 # TODO draw stacked bar chart using *results*
