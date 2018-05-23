@@ -1,6 +1,6 @@
 prefix=/usr/local
 
-all: clean example test bench
+all: clean example test bench latency
 
 reset:
 	rm -rf /dev/shm/pmemkv /tmp/pmemkv
@@ -33,6 +33,11 @@ example: configure reset
 	cd ./bin && make pmemkv_example
 	PMEM_IS_PMEM_FORCE=1 ./bin/pmemkv_example
 	rm -rf /dev/shm/pmemkv
+
+latency: configure reset
+	cd ./bin && make pmemkv_latency
+	PMEM_IS_PMEM_FORCE=1 taskset -c 0 ./bin/pmemkv_latency traces/ycsb-a.txt 1024
+	rm -rf /mnt/ram/pmemkv
 
 test: configure reset
 	cd ./bin && make pmemkv_test

@@ -84,6 +84,9 @@ target_link_libraries(pmemkv ${PMEMOBJ++_LIBRARIES} ${PMEMPOOL_LIBRARIES})
 add_executable(pmemkv_example src/pmemkv_example.cc)
 target_link_libraries(pmemkv_example pmemkv)
 
+add_executable(pmemkv_latency src/pmemkv_latency.cc)
+target_link_libraries(pmemkv_latency pmemkv)
+
 add_executable(pmemkv_test tests/pmemkv_test.cc tests/mock_tx_alloc.cc
                tests/engines/blackhole_test.cc
                tests/engines/btree_test.cc
