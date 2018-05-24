@@ -179,6 +179,14 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     const string pmpath;                                   // path when constructed
     pool<KVRoot> pmpool;                                   // pool for persistent root
     unique_ptr<KVNode> tree_top;                           // pointer to uppermost inner node
+
+    uint64_t errors = 0;
+    const uint64_t timingThreshold = 1E10;
+    uint64_t lookupTime = 0;
+    uint64_t newLeafTime = 0;
+    uint64_t existingLeafTime = 0;
+    uint64_t splitLeafTime = 0;
+    uint64_t maintenanceTime = 0;
 };
 
 } // namespace kvtree

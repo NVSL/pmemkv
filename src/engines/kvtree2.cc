@@ -45,6 +45,7 @@ namespace pmemkv {
 namespace kvtree2 {
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
+    maintenanceTime = rdtscp();
     if ((access(path.c_str(), F_OK) != 0) && (size > 0)) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
         pmpool = pool<KVRoot>::create(path.c_str(), LAYOUT, size, S_IRWXU);
@@ -54,12 +55,24 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     }
     Recover();
     LOG("Opened ok");
+    maintenanceTime = rdtscp() - maintenanceTime;
 }
 
 KVTree::~KVTree() {
+    uint64_t t1, t2;
+    t1 = rdtscp();
     LOG("Closing");
     pmpool.close();
     LOG("Closed ok");
+    t2 = rdtscp();
+    maintenanceTime += (t2 - t1);
+
+    std::cout << "Lookup," << lookupTime << std::endl;
+    std::cout << "NewLeaf," << newLeafTime << std::endl;
+    std::cout << "ExistingLeaf," << existingLeafTime << std::endl;
+    std::cout << "SplitLeaf," << splitLeafTime << std::endl;
+    std::cout << "Maintenance," << maintenanceTime << std::endl;
+    std::cout << "Errors," << errors << std::endl;
 }
 
 // ===============================================================================================
@@ -140,10 +153,13 @@ KVStatus KVTree::Get(const string& key, string* value) {
 }
 
 KVStatus KVTree::Put(const string& key, const string& value) {
+    uint64_t temp, t1, t2, t3;
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     try {
+        t1 = rdtscp();
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         auto leafnode = LeafSearch(key);
+        t2 = rdtscp();
         if (!leafnode) {
             LOG("   adding head leaf");
             unique_ptr<KVLeafNode> new_node(new KVLeafNode());
@@ -163,11 +179,28 @@ KVStatus KVTree::Put(const string& key, const string& value) {
                 LeafFillSpecificSlot(new_node.get(), hash, key, value, 0);
             });
             tree_top = move(new_node);
+            t3 = rdtscp();
+            temp = t3 - t2;
+            if (temp < timingThreshold) newLeafTime += temp;
+            else errors++;
         } else if (LeafFillSlotForKey(leafnode, hash, key, value)) {
+            t3 = rdtscp();
+            temp = t3 - t2;
+            if (temp < timingThreshold) existingLeafTime += temp;
+            else errors++;
             // nothing else to do
         } else {
             LeafSplitFull(leafnode, hash, key, value);
+            t3 = rdtscp();
+            temp = t3 - t2;
+            if (temp < timingThreshold) splitLeafTime += temp;
+            else errors++;
         }
+
+        temp = t2 - t1;
+        if (temp < timingThreshold) lookupTime += temp;
+        else errors++;
+
         return OK;
     } catch (pmem::transaction_alloc_error) {
         return FAILED;

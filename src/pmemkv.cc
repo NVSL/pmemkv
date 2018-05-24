@@ -104,6 +104,16 @@ extern "C" int8_t kvengine_remove_ffi(const FFIBuffer* buf) {
     return buf->kv->Remove(string(buf->data, (size_t) buf->keybytes));
 }
 
+extern "C" uint64_t rdtscp(void) {
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtscp"
+        : "=a" (lo), "=d" (hi)
+        :
+        : "%rcx");
+    asm volatile("lfence" ::: "memory");
+    return (uint64_t)lo | (((uint64_t)hi) << 32);
+}
+
 // todo missing test cases for KVEngine static methods & extern C API
 
 } // namespace pmemkv

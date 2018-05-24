@@ -122,6 +122,8 @@ int8_t kvengine_get_ffi(FFIBuffer* buf);                   // FFI optimized meth
 int8_t kvengine_put_ffi(const FFIBuffer* buf);
 int8_t kvengine_remove_ffi(const FFIBuffer* buf);
 
+uint64_t rdtscp(void);
+
 #ifdef __cplusplus
 }
 
