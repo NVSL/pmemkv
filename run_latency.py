@@ -99,6 +99,8 @@ loadPMDK = []
 updatePMDK = []
 loadPMEMKV = []
 updatePMEMKV = []
+maxThreshold = 0
+
 for valueSize in valueSizes:
 
     # Prepare benchmark
@@ -106,11 +108,15 @@ for valueSize in valueSizes:
     mustRepeat = True
     repeats = 0
     threshold = 0.1 # 0.1%
+    if maxThreshold == 0:
+        maxThreshold = threshold
 
     while mustRepeat:
 
         if repeats == repeatLimit:
             threshold = threshold * 2
+            if threshold > maxThreshold:
+                maxThreshold = threshold
             print('Failed to reach the accuracy threshold, increasing threshold to ' + str(threshold))
             repeats = 0
         repeats = repeats + 1
@@ -218,22 +224,26 @@ for valueSize in valueSizes:
             continue
 
         # Compute average percentages: PMDK
+        result = []
         for percents in [loadDurability, loadLogging, loadLocking, loadAllocation]:
             result.append(numpy.average(percents))
         loadPMDK.append(result)
+        result = []
         for percents in [updateDurability, updateLogging, updateLocking, updateAllocation]:
             result.append(numpy.average(percents))
         updatePMDK.append(result)
 
         # Compute average percentages: PMEMKV
+        result = []
         for percents in [loadLookup, loadNewLeaf, loadExistingLeaf, loadSplitLeaf, loadMaint]:
             result.append(numpy.average(percents))
         loadPMEMKV.append(result)
+        result = []
         for percents in [updateLookup, updateNewLeaf, updateExistingLeaf, updateSplitLeaf, updateMaint]:
             result.append(numpy.average(percents))
         updatePMEMKV.append(result)
 
-drawStackedPlot('PMDK - Load', valueSizes, convertData(loadPMDK), legendsPMDK, 'pmdk-load.pdf')
-drawStackedPlot('PMDK - Update', valueSizes, convertData(updatePMDK), legendsPMDK, 'pmdk-update.pdf')
-drawStackedPlot('PMEMKV - Load', valueSizes, convertData(loadPMEMKV), legendsPMEMKV, 'pmemkv-load.pdf')
-drawStackedPlot('PMEMKV - Update', valueSizes, convertData(updatePMEMKV), legendsPMEMKV, 'pmemkv-update.pdf')
+saveStackedPlot('PMDK - Load - STDEV < ' + maxThreshold, valueSizes, convertData(loadPMDK), legendsPMDK, 'pmdk-load.pdf')
+saveStackedPlot('PMDK - Update - STDEV < ' + maxThreshold, valueSizes, convertData(updatePMDK), legendsPMDK, 'pmdk-update.pdf')
+saveStackedPlot('PMEMKV - Load - STDEV < ' + maxThreshold, valueSizes, convertData(loadPMEMKV), legendsPMEMKV, 'pmemkv-load.pdf')
+saveStackedPlot('PMEMKV - Update - STDEV < ' + maxThreshold, valueSizes, convertData(updatePMEMKV), legendsPMEMKV, 'pmemkv-update.pdf')
