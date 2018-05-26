@@ -45,6 +45,7 @@ namespace pmemkv {
 namespace kvtree2 {
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
+    uint64_t t1 = rdtscp(), t2;
     maintenanceTime = rdtscp();
     if ((access(path.c_str(), F_OK) != 0) && (size > 0)) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
@@ -55,7 +56,9 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     }
     Recover();
     LOG("Opened ok");
-    maintenanceTime = rdtscp() - maintenanceTime;
+    t2 = rdtscp();
+    maintenanceTime = t2 - t1;
+    totalTime = t1;
 }
 
 KVTree::~KVTree() {
@@ -66,6 +69,7 @@ KVTree::~KVTree() {
     LOG("Closed ok");
     t2 = rdtscp();
     maintenanceTime += (t2 - t1);
+    totalTime = t2 - totalTime;
 
     std::cout << "Lookup," << lookupTime << std::endl;
     std::cout << "NewLeaf," << newLeafTime << std::endl;
@@ -73,6 +77,12 @@ KVTree::~KVTree() {
     std::cout << "SplitLeaf," << splitLeafTime << std::endl;
     std::cout << "Maintenance," << maintenanceTime << std::endl;
     std::cout << "Errors," << errors << std::endl;
+    std::cout << "Total," << totalTime << std::endl;
+    std::cout << "ExistingLeafLookup," << existingLeafLookupTime << std::endl;
+    std::cout << "ExistingLeafTx," << existingLeafTxTime << std::endl;
+    std::cout << "SplitLeafFindKey," << splitLeafFindKeyTime << std::endl;
+    std::cout << "SplitLeafTx," << splitLeafTxTime << std::endl;
+    std::cout << "SplitLeafPostProc," << splitLeafPostProcTime << std::endl;
 }
 
 // ===============================================================================================
@@ -153,10 +163,9 @@ KVStatus KVTree::Get(const string& key, string* value) {
 }
 
 KVStatus KVTree::Put(const string& key, const string& value) {
-    uint64_t temp, t1, t2, t3;
+    uint64_t temp, t1 = rdtscp(), t2, t3;
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     try {
-        t1 = rdtscp();
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         auto leafnode = LeafSearch(key);
         t2 = rdtscp();
@@ -273,6 +282,7 @@ void KVTree::LeafFillEmptySlot(KVLeafNode* leafnode, const uint8_t hash,
 
 bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
                                 const string& key, const string& value) {
+    uint64_t t1 = rdtscp(), t2, t3;
     // scan for empty/matching slots
     int last_empty_slot = -1;
     int key_match_slot = -1;
@@ -287,6 +297,7 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
             }
         }
     }
+    t2 = rdtscp();
 
     // update suitable slot if found
     int slot = key_match_slot >= 0 ? key_match_slot : last_empty_slot;
@@ -296,6 +307,15 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
             LeafFillSpecificSlot(leafnode, hash, key, value, slot);
         });
     }
+    t3 = rdtscp();
+
+    uint64_t temp;
+    temp = t2 - t1;
+    if (temp < timingThreshold) existingLeafLookupTime += temp;
+    else errors++;
+    temp = t3 - t2;
+    if (temp < timingThreshold) existingLeafTxTime += temp;
+    else errors++;
     return slot >= 0;
 }
 
@@ -310,6 +330,8 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
                            const string& key, const string& value) {
+    uint64_t t1, t2, t3, t4;
+    t1 = rdtscp();
     string keys[LEAF_KEYS + 1];
     keys[LEAF_KEYS] = key;
     for (int slot = LEAF_KEYS; slot--;) keys[slot] = leafnode->keys[slot];
@@ -318,6 +340,7 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
     });
     string split_key = keys[LEAF_KEYS_MIDPOINT];
     LOG("   splitting leaf at key=" << split_key);
+    t2 = rdtscp();
 
     // split leaf into two leaves, moving slots that sort above split key to new leaf
     unique_ptr<KVLeafNode> new_leafnode(new KVLeafNode());
@@ -349,9 +372,20 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
         auto target = key.compare(split_key) > 0 ? new_leafnode.get() : leafnode;
         LeafFillEmptySlot(target, hash, key, value);
     });
+    t3 = rdtscp();
 
     // recursively update volatile parents outside persistent transaction
     InnerUpdateAfterSplit(leafnode, move(new_leafnode), &split_key);
+    t4 = rdtscp();
+
+    uint64_t temp;
+    temp = t2 - t1;
+    if (temp < timingThreshold) splitLeafFindKeyTime += temp;
+    else errors++;
+    if (temp < timingThreshold) splitLeafTxTime += temp;
+    else errors++;
+    if (temp < timingThreshold) splitLeafPostProcTime += temp;
+    else errors++;
 }
 
 void KVTree::InnerUpdateAfterSplit(KVNode* node, unique_ptr<KVNode> new_node, string* split_key) {

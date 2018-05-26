@@ -7,7 +7,7 @@
 
 #define KV_ENGINE       "kvtree2"
 #define POOL_PATH       "/mnt/ram/pmemkv"
-#define POOL_SIZE       (off_t)8 << 30
+#define POOL_SIZE       (size_t)16 << 30
 #define OPS_COUNT       1E6
 #define MAX_KEY_SIZE    255
 
@@ -39,18 +39,20 @@ int main(int argc, char **argv) {
     trace.close();
 
     // Prepare value
-    char *value = (char *)malloc(POOL_SIZE);
+    char *value = (char *)malloc(valueSize);
+    assert(value != NULL);
     for (size_t i = 0; i < valueSize - 1; i++) {
-        value[i] = (rand() % 2 == 0 ? 'a' : 'A') + rand() % 26;
+        value[i] = (rand() % 2 == 0 ? 'a' : 'A') + (rand() % 26);
     }
     value[valueSize - 1] = '\0';
+    string valueStr = value;
 
     // Open store
     KVEngine* kv = KVEngine::Open(KV_ENGINE, POOL_PATH, POOL_SIZE);
 
     // Run benchmark
     for (string key : keys) {
-        KVStatus s = kv->Put(key, value);
+        KVStatus s = kv->Put(key, valueStr);
         assert(s == OK);
     }
 

@@ -1,3 +1,4 @@
+*.pdf
 *.d
 .DS_Store
 .idea/

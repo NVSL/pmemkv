@@ -185,8 +185,14 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     uint64_t lookupTime = 0;
     uint64_t newLeafTime = 0;
     uint64_t existingLeafTime = 0;
+    uint64_t existingLeafLookupTime = 0;
+    uint64_t existingLeafTxTime = 0;
     uint64_t splitLeafTime = 0;
+    uint64_t splitLeafFindKeyTime = 0;
+    uint64_t splitLeafTxTime = 0;
+    uint64_t splitLeafPostProcTime = 0;
     uint64_t maintenanceTime = 0;
+    uint64_t totalTime = 0;
 };
 
 } // namespace kvtree

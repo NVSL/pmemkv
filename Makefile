@@ -36,6 +36,7 @@ example: configure reset
 
 latency: configure reset
 	cd ./bin && make pmemkv_latency
+	rm -f /mnt/ram/pmemkv
 	PMEM_IS_PMEM_FORCE=1 taskset -c 0 ./bin/pmemkv_latency traces/ycsb-a.txt 1024
 	rm -rf /mnt/ram/pmemkv
 
