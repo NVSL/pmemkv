@@ -69,7 +69,7 @@ class KVSlot {
     const uint32_t valsize() const { return get_vs(); }
     const uint32_t valsize_direct(char *p) const { return *((uint32_t *)(p + sizeof(uint32_t))); }
     void clear();
-    void set(const uint8_t hash, const string& key, const string& value);
+    uint64_t set(const uint8_t hash, const string& key, const string& value);
     void set_ph(uint8_t v) {*((uint8_t *)((char *)(kv.get()) + sizeof(uint32_t) + sizeof(uint32_t))) = v;}
     void set_ph_direct(char *p, uint8_t v) {*((uint8_t *)(p + sizeof(uint32_t) + sizeof(uint32_t))) = v;}
     void set_ks(uint32_t v) {*((uint32_t *)(kv.get())) = v;}
@@ -193,6 +193,11 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     uint64_t splitLeafPostProcTime = 0;
     uint64_t maintenanceTime = 0;
     uint64_t totalTime = 0;
+
+    uint64_t existingLeafTxGetDirectTime = 0;
+    uint64_t existingLeafTxLoggingTime = 0;
+    uint64_t existingLeafTxAllocTime = 0;
+    uint64_t existingLeafTxMemcpyTime = 0;
 };
 
 } // namespace kvtree

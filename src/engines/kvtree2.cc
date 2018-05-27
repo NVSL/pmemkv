@@ -83,6 +83,10 @@ KVTree::~KVTree() {
     std::cout << "SplitLeafFindKey," << splitLeafFindKeyTime << std::endl;
     std::cout << "SplitLeafTx," << splitLeafTxTime << std::endl;
     std::cout << "SplitLeafPostProc," << splitLeafPostProcTime << std::endl;
+    std::cout << "ExistingLeafTxGetDirect," << existingLeafTxGetDirectTime << std::endl;
+    std::cout << "ExistingLeafTxLogging," << existingLeafTxLoggingTime << std::endl;
+    std::cout << "ExistingLeafTxAlloc," << existingLeafTxAllocTime << std::endl;
+    std::cout << "ExistingLeafTxMemcpy," << existingLeafTxMemcpyTime << std::endl;
 }
 
 // ===============================================================================================
@@ -321,11 +325,39 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
 
 void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
                                   const string& key, const string& value, const int slot) {
+    uint64_t t1 = rdtscp(), t2, t3, t4, t5;
     if (leafnode->hashes[slot] == 0) {
         leafnode->hashes[slot] = hash;
         leafnode->keys[slot] = key;
     }
-    leafnode->leaf->slots[slot].get_rw().set(hash, key, value);
+    //leafnode->leaf->slots[slot].get_rw().set(hash, key, value);
+    /*
+     * KVLeafNode
+     * * persistent_ptr<KVLeaf>
+     * * * p<KVSlot>
+     * * * * [slot]
+     * * * * * get_rw()
+     * * * * * * set(hash, key, value)
+     */
+    p<KVSlot> &slotRef = leafnode->leaf->slots[slot];
+    t2 = rdtscp();
+    KVSlot &loggedRef = slotRef.get_rw();
+    t3 = rdtscp();
+    t4 = loggedRef.set(hash, key, value);
+    t5 = rdtscp();
+
+    uint64_t temp = t2 - t1;
+    if (temp < timingThreshold) existingLeafTxGetDirectTime += temp;
+    else errors++;
+    temp = t3 - t2;
+    if (temp < timingThreshold) existingLeafTxLoggingTime += temp;
+    else errors++;
+    temp = t4 - t3;
+    if (temp < timingThreshold) existingLeafTxAllocTime += temp;
+    else errors++;
+    temp = t5 - t4;
+    if (temp < timingThreshold) existingLeafTxMemcpyTime += temp;
+    else errors++;
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
@@ -579,7 +611,7 @@ void KVSlot::clear() {
     }
 }
 
-void KVSlot::set(const uint8_t hash, const string& key, const string& value) {
+uint64_t KVSlot::set(const uint8_t hash, const string& key, const string& value) {
     if (kv) {
         char* p = kv.get();
         delete_persistent<char[]>(kv, sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + get_ks_direct(p) +
@@ -591,6 +623,7 @@ void KVSlot::set(const uint8_t hash, const string& key, const string& value) {
     vsize = value.size();
     size_t size = ksize + vsize + 2 + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
     kv = make_persistent<char[]>(size);
+    uint64_t ret = rdtscp();
     char* p = kv.get();
     set_ph_direct(p, hash);
     set_ks_direct(p, (uint32_t) ksize);
@@ -599,6 +632,7 @@ void KVSlot::set(const uint8_t hash, const string& key, const string& value) {
     memcpy(kvptr, key.data(), ksize);                                       // copy key into buffer
     kvptr += ksize + 1;                                                     // advance ptr past key
     memcpy(kvptr, value.data(), vsize);                                     // copy value into buffer
+    return ret;
 }
 
 // ===============================================================================================

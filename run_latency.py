@@ -16,7 +16,18 @@ repeatLimit = 3
 valueSizes = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 legendsPMDK = ['Durability', 'Logging', 'Locking', 'Allocation', 'Other']
 legendsPMEMKV = ['Lookup', 'New Leaf', 'Existing Leaf', 'Split Leaf', 'Maintenance']
-legendsPMEMKV2 = ['Lookup', 'New Leaf', 'Old Leaf / Lookup', 'Old Leaf / Tx', 'Split Leaf / Find Key', 'Split Leaf / Tx', 'Split Leaf / Post Proc', 'Other']
+legendsPMEMKV2 = ['Lookup',
+                  'New Leaf',
+                  'Old Leaf / Lookup',
+                  'Old Leaf / Tx - Direct',
+                  'Old Leaf / Tx - Logging',
+                  'Old Leaf / Tx - Alloc',
+                  'Old Leaf / Tx - Memcpy',
+                  'Old Leaf / Tx - Other',
+                  'Split Leaf / Find Key',
+                  'Split Leaf / Tx',
+                  'Split Leaf / Post Proc',
+                  'Other']
 enablePattern = False
 runUpdatePhase = False
 
@@ -70,6 +81,12 @@ def parsePMEMKVOutputNoMaintenance(out):
     splitLeafTxCycles = int(lines[17].split(',')[1])
     splitLeafPostProcCycles = int(lines[18].split(',')[1])
 
+    # Breakdown of oldLeafTxCycles
+    oldLeafTxGetDirectCycles = int(lines[19].split(',')[1])
+    oldLeafTxLoggingCycles = int(lines[20].split(',')[1])
+    oldLeafTxAllocCycles = int(lines[21].split(',')[1])
+    oldLeafTxMemcpyCycles = int(lines[22].split(',')[1])
+
     lookupPercent = 100 * float(lookupCycles) / totalCycles
     newLeafPercent = 100 * float(newLeafCycles) / totalCycles
     oldLeafLookupPercent = 100 * float(oldLeafLookupCycles) / totalCycles
@@ -78,7 +95,29 @@ def parsePMEMKVOutputNoMaintenance(out):
     splitLeafTxPercent = 100 * float(splitLeafTxCycles) / totalCycles
     splitLeafPostProcPercent = 100 * float(splitLeafPostProcCycles) / totalCycles
 
-    output = [lookupPercent, newLeafPercent, oldLeafLookupPercent, oldLeafTxPercent, splitLeafFindKeyPercent, splitLeafTxPercent, splitLeafPostProcPercent]
+    # Breakdown of oldLeafTxPercent
+    oldLeafTxGetDirectPercent = 100 * float(oldLeafTxGetDirectCycles) / totalCycles
+    oldLeafTxLoggingPercent = 100 * float(oldLeafTxLoggingCycles) / totalCycles
+    oldLeafTxAllocPercent = 100 * float(oldLeafTxAllocCycles) / totalCycles
+    oldLeafTxMemcpyPercent = 100 * float(oldLeafTxMemcpyCycles) / totalCycles
+    oldLeafTxOtherPercent = oldLeafTxPercent - numpy.sum([
+        oldLeafTxGetDirectPercent,
+        oldLeafTxLoggingPercent,
+        oldLeafTxAllocPercent,
+        oldLeafTxMemcpyPercent,
+    ])
+
+    output = [lookupPercent,
+              newLeafPercent,
+              oldLeafLookupPercent,
+              oldLeafTxGetDirectPercent,
+              oldLeafTxLoggingPercent,
+              oldLeafTxAllocPercent,
+              oldLeafTxMemcpyPercent,
+              oldLeafTxOtherPercent,
+              splitLeafFindKeyPercent,
+              splitLeafTxPercent,
+              splitLeafPostProcPercent]
     return output
 
 def saveStackedPlot(title, xAxis, data, legends, output):
@@ -215,7 +254,7 @@ for valueSize in valueSizes:
             data = parsePMEMKVOutputNoMaintenance(out)
             noMaintenancePMEMKV.append(data)
 
-            if not runUpdatePhase:
+            if runUpdatePhase == False:
                 continue
 
             # Step 2
@@ -264,7 +303,7 @@ for valueSize in valueSizes:
                          updateExistingLeaf,
                          updateSplitLeaf,
                          updateMaint]:
-            if not percents:
+            if len(percents) == 0:
                 continue
             if numpy.std(percents) > threshold:
                 mustRepeat = True
@@ -277,7 +316,7 @@ for valueSize in valueSizes:
         for percents in [loadDurability, loadLogging, loadLocking, loadAllocation]:
             result.append(numpy.average(percents))
         loadPMDK.append(result)
-        if runUpdatePhase:
+        if runUpdatePhase == True:
             result = []
             for percents in [updateDurability, updateLogging, updateLocking, updateAllocation]:
                 result.append(numpy.average(percents))
@@ -289,7 +328,7 @@ for valueSize in valueSizes:
         for percents in [loadLookup, loadNewLeaf, loadExistingLeaf, loadSplitLeaf]:
             result.append(numpy.average(percents))
         loadPMEMKV.append(result)
-        if runUpdatePhase:
+        if runUpdatePhase == True:
             result = []
             #for percents in [updateLookup, updateNewLeaf, updateExistingLeaf, updateSplitLeaf, updateMaint]:
             for percents in [updateLookup, updateNewLeaf, updateExistingLeaf, updateSplitLeaf]:
