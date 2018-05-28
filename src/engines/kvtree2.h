@@ -183,21 +183,13 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     uint64_t errors = 0;
     const uint64_t timingThreshold = 1E10;
     uint64_t lookupTime = 0;
-    uint64_t newLeafTime = 0;
-    uint64_t existingLeafTime = 0;
-    uint64_t existingLeafLookupTime = 0;
-    uint64_t existingLeafTxTime = 0;
-    uint64_t splitLeafTime = 0;
-    uint64_t splitLeafFindKeyTime = 0;
-    uint64_t splitLeafTxTime = 0;
-    uint64_t splitLeafPostProcTime = 0;
+    uint64_t vAllocTime = 0;
+    uint64_t pAllocTime = 0;
+    uint64_t loggingTime = 0;
+    uint64_t memcpyTime = 0;
+    uint64_t directPtrTime = 0;
     uint64_t maintenanceTime = 0;
     uint64_t totalTime = 0;
-
-    uint64_t existingLeafTxGetDirectTime = 0;
-    uint64_t existingLeafTxLoggingTime = 0;
-    uint64_t existingLeafTxAllocTime = 0;
-    uint64_t existingLeafTxMemcpyTime = 0;
 };
 
 } // namespace kvtree

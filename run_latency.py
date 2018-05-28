@@ -15,19 +15,7 @@ benchmark = './bin/pmemkv_latency'
 repeatLimit = 3
 valueSizes = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 legendsPMDK = ['Durability', 'Logging', 'Locking', 'Allocation', 'Other']
-legendsPMEMKV = ['Lookup', 'New Leaf', 'Existing Leaf', 'Split Leaf', 'Maintenance']
-legendsPMEMKV2 = ['Lookup',
-                  'New Leaf',
-                  'Old Leaf / Lookup',
-                  'Old Leaf / Tx - Direct',
-                  'Old Leaf / Tx - Logging',
-                  'Old Leaf / Tx - Alloc',
-                  'Old Leaf / Tx - Memcpy',
-                  'Old Leaf / Tx - Other',
-                  'Split Leaf / Find Key',
-                  'Split Leaf / Tx',
-                  'Split Leaf / Post Proc',
-                  'Other']
+legendsPMEMKV = ['Lookup', 'vAlloc', 'pAlloc', 'Logging', 'Memcpy', 'GetDirectPtr', 'Pool Maintenance', 'Other']
 enablePattern = False
 runUpdatePhase = False
 
@@ -54,70 +42,30 @@ def parsePMDKOutput(out):
 
 def parsePMEMKVOutput(out):
     lines = out.splitlines()
-    totalCycles = int(lines[13].split(',')[1])
+    totalCycles = int(lines[14].split(',')[1])
     lookupCycles = int(lines[7].split(',')[1])
-    newLeafCycles = int(lines[8].split(',')[1])
-    existingLeafCycles = int(lines[9].split(',')[1])
-    splitLeafCycles = int(lines[10].split(',')[1])
-    maintenanceCycles = int(lines[11].split(',')[1])
+    vAllocCycles = int(lines[8].split(',')[1])
+    pAllocCycles = int(lines[9].split(',')[1])
+    loggingCycles = int(lines[10].split(',')[1])
+    memcpyCycles = int(lines[11].split(',')[1])
+    directPtrCycles = int(lines[12].split(',')[1])
+    maintenanceCycles = int(lines[13].split(',')[1])
 
     lookupPercent = 100 * float(lookupCycles) / totalCycles
-    newLeafPercent = 100 * float(newLeafCycles) / totalCycles
-    existingLeafPercent = 100 * float(existingLeafCycles) / totalCycles
-    splitLeafPercent = 100 * float(splitLeafCycles) / totalCycles
+    vAllocPercent = 100 * float(vAllocCycles) / totalCycles
+    pAllocPercent = 100 * float(pAllocCycles) / totalCycles
+    loggingPercent = 100 * float(loggingCycles) / totalCycles
+    memcpyPercent = 100 * float(memcpyCycles) / totalCycles
+    directPtrPercent = 100 * float(directPtrCycles) / totalCycles
     maintenancePercent = 100 * float(maintenanceCycles) / totalCycles
 
-    output = [lookupPercent, newLeafPercent, existingLeafPercent, splitLeafPercent, maintenancePercent]
-    return output
-
-def parsePMEMKVOutputNoMaintenance(out):
-    lines = out.splitlines()
-    totalCycles = int(lines[13].split(',')[1]) - int(lines[11].split(',')[1])
-    lookupCycles = int(lines[7].split(',')[1])
-    newLeafCycles = int(lines[8].split(',')[1])
-    oldLeafLookupCycles = int(lines[14].split(',')[1])
-    oldLeafTxCycles = int(lines[15].split(',')[1])
-    splitLeafFindKeyCycles = int(lines[16].split(',')[1])
-    splitLeafTxCycles = int(lines[17].split(',')[1])
-    splitLeafPostProcCycles = int(lines[18].split(',')[1])
-
-    # Breakdown of oldLeafTxCycles
-    oldLeafTxGetDirectCycles = int(lines[19].split(',')[1])
-    oldLeafTxLoggingCycles = int(lines[20].split(',')[1])
-    oldLeafTxAllocCycles = int(lines[21].split(',')[1])
-    oldLeafTxMemcpyCycles = int(lines[22].split(',')[1])
-
-    lookupPercent = 100 * float(lookupCycles) / totalCycles
-    newLeafPercent = 100 * float(newLeafCycles) / totalCycles
-    oldLeafLookupPercent = 100 * float(oldLeafLookupCycles) / totalCycles
-    oldLeafTxPercent = 100 * float(oldLeafTxCycles) / totalCycles
-    splitLeafFindKeyPercent = 100 * float(splitLeafFindKeyCycles) / totalCycles
-    splitLeafTxPercent = 100 * float(splitLeafTxCycles) / totalCycles
-    splitLeafPostProcPercent = 100 * float(splitLeafPostProcCycles) / totalCycles
-
-    # Breakdown of oldLeafTxPercent
-    oldLeafTxGetDirectPercent = 100 * float(oldLeafTxGetDirectCycles) / totalCycles
-    oldLeafTxLoggingPercent = 100 * float(oldLeafTxLoggingCycles) / totalCycles
-    oldLeafTxAllocPercent = 100 * float(oldLeafTxAllocCycles) / totalCycles
-    oldLeafTxMemcpyPercent = 100 * float(oldLeafTxMemcpyCycles) / totalCycles
-    oldLeafTxOtherPercent = oldLeafTxPercent - numpy.sum([
-        oldLeafTxGetDirectPercent,
-        oldLeafTxLoggingPercent,
-        oldLeafTxAllocPercent,
-        oldLeafTxMemcpyPercent,
-    ])
-
     output = [lookupPercent,
-              newLeafPercent,
-              oldLeafLookupPercent,
-              oldLeafTxGetDirectPercent,
-              oldLeafTxLoggingPercent,
-              oldLeafTxAllocPercent,
-              oldLeafTxMemcpyPercent,
-              oldLeafTxOtherPercent,
-              splitLeafFindKeyPercent,
-              splitLeafTxPercent,
-              splitLeafPostProcPercent]
+              vAllocPercent,
+              pAllocPercent,
+              loggingPercent,
+              memcpyPercent,
+              directPtrPercent,
+              maintenancePercent]
     return output
 
 def saveStackedPlot(title, xAxis, data, legends, output):
@@ -159,19 +107,19 @@ def convertData(data):
     for c in range(0, len(data[0])):
         temp = []
         for row in data:
-            temp.append(int(numpy.ceil(row[c])))
+            temp.append(row[c])
+        temp = list(numpy.around(temp, decimals=3))
         output.append(temp)
     for row in data:
-        other.append(numpy.maximum(0, 100 - int(numpy.sum([numpy.ceil(t) for t in row]))))
+        other.append(numpy.maximum(0, 100 - numpy.sum(list(numpy.around(row, decimals=3)))))
+    other = list(numpy.around(other, decimals=3))
     output.append(other)
     return output
 
 loadPMDK = []
 updatePMDK = []
 loadPMEMKV = []
-loadPMEMKVNoMaintenance = []
 updatePMEMKV = []
-updatePMEMKVNoMaintenance = []
 maxThreshold = 0
 
 for valueSize in valueSizes:
@@ -197,29 +145,12 @@ for valueSize in valueSizes:
         mustRepeat = False
 
         # PMDK output
-        loadDurability = []
-        loadLogging = []
-        loadLocking = []
-        loadAllocation = []
-        updateDurability = []
-        updateLogging = []
-        updateLocking = []
-        updateAllocation = []
+        pmdkLoadTemp = []
+        pmdkUpdateTemp = []
 
         # PMEMKV output
-        loadLookup = []
-        loadNewLeaf = []
-        loadExistingLeaf = []
-        loadSplitLeaf = []
-        loadMaint = []
-        updateLookup = []
-        updateNewLeaf = []
-        updateExistingLeaf = []
-        updateSplitLeaf = []
-        updateMaint = []
-
-        # PMEMKV output - no maintenance
-        noMaintenancePMEMKV = []
+        pmemkvLoadTemp = []
+        pmemkvUpdateTemp = []
 
         for attempt in range(0, 5):
             # Clean environment
@@ -236,23 +167,10 @@ for valueSize in valueSizes:
                 sys.exit(1)
 
             # Parse PMDK output
-            data = parsePMDKOutput(out)
-            loadDurability.append(data[0])
-            loadLogging.append(data[1])
-            loadLocking.append(data[2])
-            loadAllocation.append(data[3])
+            pmdkLoadTemp.append(parsePMDKOutput(out))
 
             # Parse PMEMKV output
-            data = parsePMEMKVOutput(out)
-            loadLookup.append(data[0])
-            loadNewLeaf.append(data[1])
-            loadExistingLeaf.append(data[2])
-            loadSplitLeaf.append(data[3])
-            loadMaint.append(data[4])
-
-            # Parse PMEMKV output - no maintenance
-            data = parsePMEMKVOutputNoMaintenance(out)
-            noMaintenancePMEMKV.append(data)
+            pmemkvLoadTemp.append(parsePMEMKVOutput(out))
 
             if runUpdatePhase == False:
                 continue
@@ -267,88 +185,46 @@ for valueSize in valueSizes:
                 sys.exit(1)
 
             # Parse PMDK output
-            data = parsePMDKOutput(out)
-            updateDurability.append(data[0])
-            updateLogging.append(data[1])
-            updateLocking.append(data[2])
-            updateAllocation.append(data[3])
+            pmdkUpdateTemp.append(parsePMDKOutput(out))
 
             # Parse PMEMKV output
-            data = parsePMEMKVOutput(out)
-            updateLookup.append(data[0])
-            updateNewLeaf.append(data[1])
-            updateExistingLeaf.append(data[2])
-            updateSplitLeaf.append(data[3])
-            updateMaint.append(data[4])
-
-            # Parse PMEMKV output - no maintenance
-            # TODO
+            pmemkvUpdateTemp.append(parsePMEMKVOutput(out))
 
         # Check if results are accurate
-        for percents in [loadDurability,
-                         loadLogging,
-                         loadLocking,
-                         loadAllocation,
-                         updateDurability,
-                         updateLogging,
-                         updateLocking,
-                         updateAllocation,
-                         loadLookup,
-                         loadNewLeaf,
-                         loadExistingLeaf,
-                         loadSplitLeaf,
-                         loadMaint,
-                         updateLookup,
-                         updateNewLeaf,
-                         updateExistingLeaf,
-                         updateSplitLeaf,
-                         updateMaint]:
-            if len(percents) == 0:
-                continue
-            if numpy.std(percents) > threshold:
-                mustRepeat = True
+        for tempResult in [pmdkLoadTemp, pmdkUpdateTemp, pmemkvLoadTemp, pmemkvUpdateTemp]:
+            if mustRepeat == True:
                 break
+            # Only empty for update experiments iff runUpdatePhase is set to False
+            if len(tempResult) == 0:
+                continue
+            for column in range(0, len(tempResult[0])):
+                percents = [] # Holds values for each percent (e.g., Durability)
+                for row in tempResult:
+                    percents.append(row[column])
+                if numpy.std(percents) > threshold:
+                    mustRepeat = True
+                    break
         if mustRepeat:
             continue
 
-        # Compute average percentages: PMDK
-        result = []
-        for percents in [loadDurability, loadLogging, loadLocking, loadAllocation]:
-            result.append(numpy.average(percents))
-        loadPMDK.append(result)
-        if runUpdatePhase == True:
-            result = []
-            for percents in [updateDurability, updateLogging, updateLocking, updateAllocation]:
-                result.append(numpy.average(percents))
-            updatePMDK.append(result)
+        # Compute average percentages
+        def computeAvg(data):
+            output = []
+            for column in range(0, len(data[0])):
+                percents = []
+                for row in data:
+                    percents.append(row[column])
+                output.append(numpy.average(percents))
+            return output
 
-        # Compute average percentages: PMEMKV
-        result = []
-        #for percents in [loadLookup, loadNewLeaf, loadExistingLeaf, loadSplitLeaf, loadMaint]:
-        for percents in [loadLookup, loadNewLeaf, loadExistingLeaf, loadSplitLeaf]:
-            result.append(numpy.average(percents))
-        loadPMEMKV.append(result)
+        loadPMDK.append(computeAvg(pmdkLoadTemp))
+        loadPMEMKV.append(computeAvg(pmemkvLoadTemp))
         if runUpdatePhase == True:
-            result = []
-            #for percents in [updateLookup, updateNewLeaf, updateExistingLeaf, updateSplitLeaf, updateMaint]:
-            for percents in [updateLookup, updateNewLeaf, updateExistingLeaf, updateSplitLeaf]:
-                result.append(numpy.average(percents))
-            updatePMEMKV.append(result)
-
-        # Compute average percentages : PMEMKV with no maintenance overhead
-        result = []
-        for c in range(0, len(noMaintenancePMEMKV[0])):
-            temp = []
-            for row in noMaintenancePMEMKV:
-                temp.append(row[c])
-            result.append(numpy.average(temp))
-        loadPMEMKVNoMaintenance.append(result)
-        # TODO update
+            updatePMDK.append(computeAvg(pmdkUpdateTemp))
+            updatePMEMKV.append(computeAvg(pmemkvUpdateTemp))
 
 saveStackedPlot('PMDK - Load - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPMDK), legendsPMDK, 'pmdk-load.pdf')
 saveStackedPlot('PMEMKV - Load - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPMEMKV), legendsPMEMKV, 'pmemkv-load.pdf')
-saveStackedPlot('PMEMKV - Load (no maintenance) - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPMEMKVNoMaintenance), legendsPMEMKV2, 'pmemkv-load-no-maint.pdf')
-if runUpdatePhase:
+if runUpdatePhase == True:
     saveStackedPlot('PMDK - Update - STDEV < ' + str(maxThreshold), valueSizes, convertData(updatePMDK), legendsPMDK, 'pmdk-update.pdf')
     saveStackedPlot('PMEMKV - Update - STDEV < ' + str(maxThreshold), valueSizes, convertData(updatePMEMKV), legendsPMEMKV, 'pmemkv-update.pdf')
-    # TODO

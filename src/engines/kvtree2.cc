@@ -72,21 +72,14 @@ KVTree::~KVTree() {
     totalTime = t2 - totalTime;
 
     std::cout << "Lookup," << lookupTime << std::endl;
-    std::cout << "NewLeaf," << newLeafTime << std::endl;
-    std::cout << "ExistingLeaf," << existingLeafTime << std::endl;
-    std::cout << "SplitLeaf," << splitLeafTime << std::endl;
+    std::cout << "vAlloc," << vAllocTime << std::endl;
+    std::cout << "pAlloc," << pAllocTime << std::endl;
+    std::cout << "Logging," << loggingTime << std::endl;
+    std::cout << "Memcpy," << memcpyTime << std::endl;
+    std::cout << "DirectPtr," << directPtrTime << std::endl;
     std::cout << "Maintenance," << maintenanceTime << std::endl;
-    std::cout << "Errors," << errors << std::endl;
     std::cout << "Total," << totalTime << std::endl;
-    std::cout << "ExistingLeafLookup," << existingLeafLookupTime << std::endl;
-    std::cout << "ExistingLeafTx," << existingLeafTxTime << std::endl;
-    std::cout << "SplitLeafFindKey," << splitLeafFindKeyTime << std::endl;
-    std::cout << "SplitLeafTx," << splitLeafTxTime << std::endl;
-    std::cout << "SplitLeafPostProc," << splitLeafPostProcTime << std::endl;
-    std::cout << "ExistingLeafTxGetDirect," << existingLeafTxGetDirectTime << std::endl;
-    std::cout << "ExistingLeafTxLogging," << existingLeafTxLoggingTime << std::endl;
-    std::cout << "ExistingLeafTxAlloc," << existingLeafTxAllocTime << std::endl;
-    std::cout << "ExistingLeafTxMemcpy," << existingLeafTxMemcpyTime << std::endl;
+    std::cout << "Errors," << errors << std::endl;
 }
 
 // ===============================================================================================
@@ -167,16 +160,17 @@ KVStatus KVTree::Get(const string& key, string* value) {
 }
 
 KVStatus KVTree::Put(const string& key, const string& value) {
-    uint64_t temp, t1 = rdtscp(), t2, t3;
+    uint64_t temp, t1 = rdtscp(), t2, t3, t4;
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     try {
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         auto leafnode = LeafSearch(key);
-        t2 = rdtscp();
+        t2 = rdtscp(); // Leaf lookup
         if (!leafnode) {
             LOG("   adding head leaf");
             unique_ptr<KVLeafNode> new_node(new KVLeafNode());
             new_node->is_leaf = true;
+            t3 = rdtscp(); // Volatile allocation
             transaction::exec_tx(pmpool, [&] {
                 if (!leaves_prealloc.empty()) {
                     new_node->leaf = leaves_prealloc.back();
@@ -189,27 +183,26 @@ KVStatus KVTree::Put(const string& key, const string& value) {
                     new_leaf->next = old_head;
                     new_node->leaf = new_leaf;
                 }
+                t4 = rdtscp();
                 LeafFillSpecificSlot(new_node.get(), hash, key, value, 0);
             });
             tree_top = move(new_node);
-            t3 = rdtscp();
+
+            // Volatile allocation
             temp = t3 - t2;
-            if (temp < timingThreshold) newLeafTime += temp;
+            if (temp < timingThreshold) vAllocTime += temp;
+            else errors++;
+            // Persistent allocation
+            temp = t4 - t3;
+            if (temp < timingThreshold) pAllocTime += temp;
             else errors++;
         } else if (LeafFillSlotForKey(leafnode, hash, key, value)) {
-            t3 = rdtscp();
-            temp = t3 - t2;
-            if (temp < timingThreshold) existingLeafTime += temp;
-            else errors++;
             // nothing else to do
         } else {
             LeafSplitFull(leafnode, hash, key, value);
-            t3 = rdtscp();
-            temp = t3 - t2;
-            if (temp < timingThreshold) splitLeafTime += temp;
-            else errors++;
         }
 
+        // Leaf lookup time
         temp = t2 - t1;
         if (temp < timingThreshold) lookupTime += temp;
         else errors++;
@@ -286,7 +279,7 @@ void KVTree::LeafFillEmptySlot(KVLeafNode* leafnode, const uint8_t hash,
 
 bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
                                 const string& key, const string& value) {
-    uint64_t t1 = rdtscp(), t2, t3;
+    uint64_t temp, t1 = rdtscp();
     // scan for empty/matching slots
     int last_empty_slot = -1;
     int key_match_slot = -1;
@@ -301,7 +294,7 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
             }
         }
     }
-    t2 = rdtscp();
+    temp = rdtscp() - t1; // Lookup time
 
     // update suitable slot if found
     int slot = key_match_slot >= 0 ? key_match_slot : last_empty_slot;
@@ -311,21 +304,17 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
             LeafFillSpecificSlot(leafnode, hash, key, value, slot);
         });
     }
-    t3 = rdtscp();
 
-    uint64_t temp;
-    temp = t2 - t1;
-    if (temp < timingThreshold) existingLeafLookupTime += temp;
+    // Lookup time
+    if (temp < timingThreshold) lookupTime += temp;
     else errors++;
-    temp = t3 - t2;
-    if (temp < timingThreshold) existingLeafTxTime += temp;
-    else errors++;
+
     return slot >= 0;
 }
 
 void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
                                   const string& key, const string& value, const int slot) {
-    uint64_t t1 = rdtscp(), t2, t3, t4, t5;
+    uint64_t temp, t1 = rdtscp(), t2, t3, t4, t5;
     if (leafnode->hashes[slot] == 0) {
         leafnode->hashes[slot] = hash;
         leafnode->keys[slot] = key;
@@ -340,30 +329,33 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
      * * * * * * set(hash, key, value)
      */
     p<KVSlot> &slotRef = leafnode->leaf->slots[slot];
-    t2 = rdtscp();
+    t2 = rdtscp(); // Get direct pointer
     KVSlot &loggedRef = slotRef.get_rw();
-    t3 = rdtscp();
-    t4 = loggedRef.set(hash, key, value);
-    t5 = rdtscp();
+    t3 = rdtscp(); // Undo-logging
+    t4 = loggedRef.set(hash, key, value); // Returns pAlloc
+    t5 = rdtscp(); // Memory copies
 
-    uint64_t temp = t2 - t1;
-    if (temp < timingThreshold) existingLeafTxGetDirectTime += temp;
+    // Get direct pointer
+    temp = t2 - t1;
+    if (temp < timingThreshold) directPtrTime += temp;
     else errors++;
+    // Logging
     temp = t3 - t2;
-    if (temp < timingThreshold) existingLeafTxLoggingTime += temp;
+    if (temp < timingThreshold) loggingTime += temp;
     else errors++;
+    // Persistent allocation
     temp = t4 - t3;
-    if (temp < timingThreshold) existingLeafTxAllocTime += temp;
+    if (temp < timingThreshold) pAllocTime += temp;
     else errors++;
+    // Memory copy
     temp = t5 - t4;
-    if (temp < timingThreshold) existingLeafTxMemcpyTime += temp;
+    if (temp < timingThreshold) memcpyTime += temp;
     else errors++;
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
                            const string& key, const string& value) {
-    uint64_t t1, t2, t3, t4;
-    t1 = rdtscp();
+    // Accounted for by Other bar
     string keys[LEAF_KEYS + 1];
     keys[LEAF_KEYS] = key;
     for (int slot = LEAF_KEYS; slot--;) keys[slot] = leafnode->keys[slot];
@@ -372,12 +364,13 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
     });
     string split_key = keys[LEAF_KEYS_MIDPOINT];
     LOG("   splitting leaf at key=" << split_key);
-    t2 = rdtscp();
 
+    uint64_t temp, t1 = rdtscp(), t2, t3, t4;
     // split leaf into two leaves, moving slots that sort above split key to new leaf
     unique_ptr<KVLeafNode> new_leafnode(new KVLeafNode());
     new_leafnode->parent = leafnode->parent;
     new_leafnode->is_leaf = true;
+    t2 = rdtscp(); // Allocation (volatile)
     transaction::exec_tx(pmpool, [&] {
         persistent_ptr<KVLeaf> new_leaf;
         if (!leaves_prealloc.empty()) {
@@ -392,6 +385,8 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
             new_leaf->next = old_head;
             new_leafnode->leaf = new_leaf;
         }
+        t3 = rdtscp(); // Persistent allocation
+        // Accounted for by Other bar
         for (int slot = LEAF_KEYS; slot--;) {
             if (leafnode->keys[slot].compare(split_key) > 0) {
                 new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
@@ -404,19 +399,19 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
         auto target = key.compare(split_key) > 0 ? new_leafnode.get() : leafnode;
         LeafFillEmptySlot(target, hash, key, value);
     });
-    t3 = rdtscp();
 
+    t4 = rdtscp();
     // recursively update volatile parents outside persistent transaction
     InnerUpdateAfterSplit(leafnode, move(new_leafnode), &split_key);
-    t4 = rdtscp();
 
-    uint64_t temp;
-    temp = t2 - t1;
-    if (temp < timingThreshold) splitLeafFindKeyTime += temp;
+    temp = rdtscp() - t4; // vAlloc (assumption -- fair to say most of the cost is for alloc)
+    if (temp < timingThreshold) vAllocTime += temp;
     else errors++;
-    if (temp < timingThreshold) splitLeafTxTime += temp;
+    temp = t2 - t1; // vAlloc
+    if (temp < timingThreshold) vAllocTime += temp;
     else errors++;
-    if (temp < timingThreshold) splitLeafPostProcTime += temp;
+    temp = t3 - t2; // pAlloc
+    if (temp < timingThreshold) pAllocTime += temp;
     else errors++;
 }
 
