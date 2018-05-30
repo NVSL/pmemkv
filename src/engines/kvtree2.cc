@@ -78,6 +78,8 @@ KVTree::~KVTree() {
     std::cout << "Memcpy," << memcpyTime << std::endl;
     std::cout << "DirectPtr," << directPtrTime << std::endl;
     std::cout << "Maintenance," << maintenanceTime << std::endl;
+    std::cout << "TxOverhead," << txOverheadTime << std::endl;
+    std::cout << "SplitOverhead," << splitTime << std::endl;
     std::cout << "Total," << totalTime << std::endl;
     std::cout << "Errors," << errors << std::endl;
 }
@@ -160,7 +162,8 @@ KVStatus KVTree::Get(const string& key, string* value) {
 }
 
 KVStatus KVTree::Put(const string& key, const string& value) {
-    uint64_t temp, t1 = rdtscp(), t2, t3, t4;
+    // Assumption: Never fails during benchmarking
+    uint64_t temp, t1 = rdtscp(), t2, t3, t4, t5 = 0, t6, t7, t8;
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     try {
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
@@ -172,40 +175,64 @@ KVStatus KVTree::Put(const string& key, const string& value) {
             new_node->is_leaf = true;
             t3 = rdtscp(); // Volatile allocation
             transaction::exec_tx(pmpool, [&] {
+                t4 = rdtscp();
                 if (!leaves_prealloc.empty()) {
                     new_node->leaf = leaves_prealloc.back();
                     leaves_prealloc.pop_back();
                 } else {
+                    auto new_leaf = make_persistent<KVLeaf>();
+                    t5 = rdtscp(); // Only set if we take this path
                     auto root = pmpool.get_root();
                     auto old_head = root->head;
-                    auto new_leaf = make_persistent<KVLeaf>();
                     root->head = new_leaf;
                     new_leaf->next = old_head;
                     new_node->leaf = new_leaf;
                 }
-                t4 = rdtscp();
+                t6 = rdtscp(); // pAlloc and DirectPtr
                 LeafFillSpecificSlot(new_node.get(), hash, key, value, 0);
+                t7 = rdtscp();
             });
+            t8 = rdtscp(); // TxOverhead
             tree_top = move(new_node);
 
+            // <timing>
             // Volatile allocation
             temp = t3 - t2;
             if (temp < timingThreshold) vAllocTime += temp;
             else errors++;
-            // Persistent allocation
-            temp = t4 - t3;
-            if (temp < timingThreshold) pAllocTime += temp;
+            // Persistent allocation and DirectPtr
+            if (t5 != 0) {
+                // pAlloc
+                temp = t5 - t4;
+                if (temp < timingThreshold) pAllocTime += temp;
+                else errors++;
+                // DirectPtr
+                temp = t6 - t5;
+                if (temp < timingThreshold) directPtrTime += temp;
+                else errors++;
+            }
+            else { // no DirectPtr
+                temp = t6 - t4;
+                if (temp < timingThreshold) pAllocTime += temp;
+                else errors++;
+            }
+            // Transaction overhead
+            temp = (t8 - t3) - (t7 - t4);
+            if (temp < timingThreshold) txOverheadTime += temp;
             else errors++;
+            // </timing>
         } else if (LeafFillSlotForKey(leafnode, hash, key, value)) {
             // nothing else to do
         } else {
             LeafSplitFull(leafnode, hash, key, value);
         }
 
+        // <timing>
         // Leaf lookup time
         temp = t2 - t1;
         if (temp < timingThreshold) lookupTime += temp;
         else errors++;
+        // </timing>
 
         return OK;
     } catch (pmem::transaction_alloc_error) {
@@ -279,7 +306,7 @@ void KVTree::LeafFillEmptySlot(KVLeafNode* leafnode, const uint8_t hash,
 
 bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
                                 const string& key, const string& value) {
-    uint64_t temp, t1 = rdtscp();
+    uint64_t temp, t1 = rdtscp(), t2, t3, t4, t5;
     // scan for empty/matching slots
     int last_empty_slot = -1;
     int key_match_slot = -1;
@@ -294,18 +321,27 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
             }
         }
     }
-    temp = rdtscp() - t1; // Lookup time
+    t2 = rdtscp(); // Lookup time
 
     // update suitable slot if found
     int slot = key_match_slot >= 0 ? key_match_slot : last_empty_slot;
     if (slot >= 0) {
         LOG("   filling slot=" << slot);
         transaction::exec_tx(pmpool, [&] {
+            t3 = rdtscp();
             LeafFillSpecificSlot(leafnode, hash, key, value, slot);
+            t4 = rdtscp();
         });
+        t5 = rdtscp();
+
+        // TxOverhead
+        temp = (t5 - t2) - (t4 - t3);
+        if (temp < timingThreshold) txOverheadTime += temp;
+        else errors++;
     }
 
     // Lookup time
+    temp = t2 - t1;
     if (temp < timingThreshold) lookupTime += temp;
     else errors++;
 
@@ -332,7 +368,7 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
     t2 = rdtscp(); // Get direct pointer
     KVSlot &loggedRef = slotRef.get_rw();
     t3 = rdtscp(); // Undo-logging
-    t4 = loggedRef.set(hash, key, value); // Returns pAlloc
+    t4 = loggedRef.set(hash, key, value); // Returns pAlloc latency
     t5 = rdtscp(); // Memory copies
 
     // Get direct pointer
@@ -344,18 +380,18 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
     if (temp < timingThreshold) loggingTime += temp;
     else errors++;
     // Persistent allocation
-    temp = t4 - t3;
+    temp = t4;
     if (temp < timingThreshold) pAllocTime += temp;
     else errors++;
     // Memory copy
-    temp = t5 - t4;
+    temp = (t5 - t3) - t4;
     if (temp < timingThreshold) memcpyTime += temp;
     else errors++;
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
                            const string& key, const string& value) {
-    // Accounted for by Other bar
+    uint64_t temp, t0 = rdtscp(), t1, t2, t3, t4 = 0, t5, t6, t7, t8;
     string keys[LEAF_KEYS + 1];
     keys[LEAF_KEYS] = key;
     for (int slot = LEAF_KEYS; slot--;) keys[slot] = leafnode->keys[slot];
@@ -364,29 +400,30 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
     });
     string split_key = keys[LEAF_KEYS_MIDPOINT];
     LOG("   splitting leaf at key=" << split_key);
+    t1 = rdtscp(); // Split overhead
 
-    uint64_t temp, t1 = rdtscp(), t2, t3, t4;
     // split leaf into two leaves, moving slots that sort above split key to new leaf
     unique_ptr<KVLeafNode> new_leafnode(new KVLeafNode());
     new_leafnode->parent = leafnode->parent;
     new_leafnode->is_leaf = true;
     t2 = rdtscp(); // Allocation (volatile)
     transaction::exec_tx(pmpool, [&] {
+        t3 = rdtscp();
         persistent_ptr<KVLeaf> new_leaf;
         if (!leaves_prealloc.empty()) {
             new_leaf = leaves_prealloc.back();
             new_leafnode->leaf = new_leaf;
             leaves_prealloc.pop_back();
         } else {
+            new_leaf = make_persistent<KVLeaf>();
+            t4 = rdtscp();
             auto root = pmpool.get_root();
             auto old_head = root->head;
-            new_leaf = make_persistent<KVLeaf>();
             root->head = new_leaf;
             new_leaf->next = old_head;
             new_leafnode->leaf = new_leaf;
         }
-        t3 = rdtscp(); // Persistent allocation
-        // Accounted for by Other bar
+        t5 = rdtscp(); // pAlloc and GetDirectPtr
         for (int slot = LEAF_KEYS; slot--;) {
             if (leafnode->keys[slot].compare(split_key) > 0) {
                 new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
@@ -397,22 +434,44 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
             }
         }
         auto target = key.compare(split_key) > 0 ? new_leafnode.get() : leafnode;
+        t6 = rdtscp(); // SplitTime
+        // Accounted for by Other bars (keeps calling LeafFillSpecificSlot in a loop)
         LeafFillEmptySlot(target, hash, key, value);
+        t7 = rdtscp();
     });
+    t8 = rdtscp(); // TxOverhead
 
-    t4 = rdtscp();
     // recursively update volatile parents outside persistent transaction
     InnerUpdateAfterSplit(leafnode, move(new_leafnode), &split_key);
 
-    temp = rdtscp() - t4; // vAlloc (assumption -- fair to say most of the cost is for alloc)
+    // <timing>
+    // vAlloc (assumption -- fair to say most of the cost is for alloc)
+    temp = (rdtscp() - t8) + (t2 - t1);
     if (temp < timingThreshold) vAllocTime += temp;
     else errors++;
-    temp = t2 - t1; // vAlloc
-    if (temp < timingThreshold) vAllocTime += temp;
+    // Split overhead
+    temp = (t1 - t0) + (t6 - t5);
+    if (temp < timingThreshold) splitTime += temp;
     else errors++;
-    temp = t3 - t2; // pAlloc
-    if (temp < timingThreshold) pAllocTime += temp;
+    // pAlloc and DirectPtr
+    if (t4 != 0) {
+        temp = t4 - t3;
+        if (temp < timingThreshold) pAllocTime += temp;
+        else errors++;
+        temp = t5 - t4;
+        if (temp < timingThreshold) directPtrTime += temp;
+        else errors++;
+    }
+    else {
+        temp = t5 - t3;
+        if (temp < timingThreshold) pAllocTime += temp;
+        else errors++;
+    }
+    // TxOverhead
+    temp = (t8 - t2) - (t7 - t3);
+    if (temp < timingThreshold) txOverheadTime += temp;
     else errors++;
+    // </timing>
 }
 
 void KVTree::InnerUpdateAfterSplit(KVNode* node, unique_ptr<KVNode> new_node, string* split_key) {
@@ -617,8 +676,9 @@ uint64_t KVSlot::set(const uint8_t hash, const string& key, const string& value)
     ksize = key.size();
     vsize = value.size();
     size_t size = ksize + vsize + 2 + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    uint64_t t1 = rdtscp();
     kv = make_persistent<char[]>(size);
-    uint64_t ret = rdtscp();
+    uint64_t ret = rdtscp() - t1;
     char* p = kv.get();
     set_ph_direct(p, hash);
     set_ks_direct(p, (uint32_t) ksize);

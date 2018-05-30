@@ -188,6 +188,8 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     uint64_t loggingTime = 0;
     uint64_t memcpyTime = 0;
     uint64_t directPtrTime = 0;
+    uint64_t txOverheadTime = 0;
+    uint64_t splitTime = 0;
     uint64_t maintenanceTime = 0;
     uint64_t totalTime = 0;
 };

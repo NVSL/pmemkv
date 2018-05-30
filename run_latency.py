@@ -15,12 +15,44 @@ benchmark = './bin/pmemkv_latency'
 repeatLimit = 3
 valueSizes = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 legendsPMDK = ['Durability', 'Logging', 'Locking', 'Allocation', 'Other']
-legendsPMEMKV = ['Lookup', 'vAlloc', 'pAlloc', 'Logging', 'Memcpy', 'GetDirectPtr', 'Pool Maintenance', 'Other']
+legendsPMEMKV = ['Lookup',
+                 'Volatile Alloc',
+                 'Persistent Alloc',
+                 'Constructor',
+                 'Logging',
+                 'Memory Copy',
+                 'Get Direct Ptr',
+                 'Tx Overhead',
+                 'Split Overhead',
+                 'Pool Maintenance',
+                 'Other',
+                 ]
 enablePattern = False
 runUpdatePhase = False
 
 #colors = ['#01579B', '#0288D1', '#03A9F4', '#4FC3F7', '#B3E5FC']
-colors = ['#dcebca','#b2dbca','#89cccc','#62bfd1','#45aacc','#3e93bd','#3678ad','#2d5f9c','#24458c','#1d2d7d','#162063','#11184a']
+#colors = ['#dcebca','#b2dbca','#89cccc','#62bfd1','#45aacc','#3e93bd','#3678ad','#2d5f9c','#24458c','#1d2d7d','#162063','#11184a']
+colors = [
+    '#f24438',
+    '#2298f2',
+    '#8cc24a',
+    '#ff5724',
+    '#05abf2',
+    '#e81e61',
+    '#cedb39',
+    #'#785448',
+    #'#9c28b0',
+    #'#00bed4',
+    #'#ffe83d',
+    #'#9c9c9c',
+    '#653ab5',
+    '#009485',
+    '#ffc108',
+    #'#607d8a',
+    '#3e52b3',
+    '#4cad50',
+    '#ff9500',
+]
 #colors = ['#169e83', '#f29811', '#28ad60', '#d15400', '#2a81b8', '#bf382c', '#8c44ab', '#2d3e4f', '#7e8b8c']
 patterns = ['xx', '//', '++', '..', '--', 'oo', '**']
 
@@ -42,29 +74,39 @@ def parsePMDKOutput(out):
 
 def parsePMEMKVOutput(out):
     lines = out.splitlines()
-    totalCycles = int(lines[14].split(',')[1])
-    lookupCycles = int(lines[7].split(',')[1])
-    vAllocCycles = int(lines[8].split(',')[1])
-    pAllocCycles = int(lines[9].split(',')[1])
-    loggingCycles = int(lines[10].split(',')[1])
-    memcpyCycles = int(lines[11].split(',')[1])
-    directPtrCycles = int(lines[12].split(',')[1])
-    maintenanceCycles = int(lines[13].split(',')[1])
+    totalCycles = int(lines[18].split(',')[1])
+    lookupCycles = int(lines[9].split(',')[1])
+    vAllocCycles = int(lines[10].split(',')[1])
+    pAllocCycles = int(lines[11].split(',')[1])
+    loggingCycles = int(lines[12].split(',')[1])
+    memcpyCycles = int(lines[13].split(',')[1])
+    directPtrCycles = int(lines[14].split(',')[1])
+    maintenanceCycles = int(lines[15].split(',')[1])
+    txOverheadCycles = int(lines[16].split(',')[1])
+    splitOverheadCycles = int(lines[17].split(',')[1])
+    pConstructorCycles = int(lines[8].split(',')[1])
+    pAllocCycles = pAllocCycles - pConstructorCycles
 
     lookupPercent = 100 * float(lookupCycles) / totalCycles
     vAllocPercent = 100 * float(vAllocCycles) / totalCycles
     pAllocPercent = 100 * float(pAllocCycles) / totalCycles
+    pConstructorPercent = 100 * float(pConstructorCycles) / totalCycles
     loggingPercent = 100 * float(loggingCycles) / totalCycles
     memcpyPercent = 100 * float(memcpyCycles) / totalCycles
     directPtrPercent = 100 * float(directPtrCycles) / totalCycles
     maintenancePercent = 100 * float(maintenanceCycles) / totalCycles
+    txOverheadPercent = 100 * float(txOverheadCycles) / totalCycles
+    splitOverheadPercent = 100 * float(splitOverheadCycles) / totalCycles
 
     output = [lookupPercent,
               vAllocPercent,
               pAllocPercent,
+              pConstructorPercent,
               loggingPercent,
               memcpyPercent,
               directPtrPercent,
+              txOverheadPercent,
+              splitOverheadPercent,
               maintenancePercent]
     return output
 
@@ -91,7 +133,7 @@ def saveStackedPlot(title, xAxis, data, legends, output):
 
     plt.ylabel('Percentage of total execution time')
     plt.xlabel('Value size (bytes)')
-    plt.title(title)
+    #plt.title(title)
     plt.xticks(ind, xAxis)
     plt.yticks(numpy.arange(0, 101, 10))
     art = []
