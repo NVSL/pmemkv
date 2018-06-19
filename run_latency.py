@@ -27,6 +27,7 @@ legendsPMEMKV = ['Lookup',
                  'Pool Maintenance',
                  'Other',
                  ]
+legendsPaper = ['Tree Management', 'Persistent Alloc', 'Logging', 'Tx Management', 'Get Direct Ptr', 'Other']
 enablePattern = False
 runUpdatePhase = False
 
@@ -110,6 +111,34 @@ def parsePMEMKVOutput(out):
               maintenancePercent]
     return output
 
+def parseOutputForPaper(out):
+    lines = out.splitlines()
+    totalCycles = int(lines[6].split(',')[1])
+    lookupCycles = int(lines[9].split(',')[1])
+    vAllocCycles = int(lines[10].split(',')[1])
+    pAllocCycles = int(lines[11].split(',')[1])
+    loggingCycles = int(lines[12].split(',')[1])
+    memcpyCycles = int(lines[13].split(',')[1])
+    directPtrCycles = int(lines[14].split(',')[1])
+    txOverheadCycles = int(lines[16].split(',')[1])
+    splitOverheadCycles = int(lines[17].split(',')[1])
+    pConstructorCycles = int(lines[8].split(',')[1])
+    pAllocCycles = pAllocCycles - pConstructorCycles
+
+    treeManagementCycles = lookupCycles + vAllocCycles + memcpyCycles + splitOverheadCycles + pConstructorCycles
+    treeManagementPercent = 100 * float(treeManagementCycles) / totalCycles
+    pAllocPercent = 100 * float(pAllocCycles) / totalCycles
+    loggingPercent = 100 * float(loggingCycles) / totalCycles
+    directPtrPercent = 100 * float(directPtrCycles) / totalCycles
+    txOverheadPercent = 100 * float(txOverheadCycles) / totalCycles
+
+    output = [treeManagementPercent,
+              pAllocPercent,
+              loggingPercent,
+              directPtrPercent,
+              txOverheadPercent]
+    return output
+
 def saveStackedPlot(title, xAxis, data, legends, output):
     # DEBUG
     print(data)
@@ -162,6 +191,7 @@ loadPMDK = []
 updatePMDK = []
 loadPMEMKV = []
 updatePMEMKV = []
+loadPaper = []
 maxThreshold = 0
 
 for valueSize in valueSizes:
@@ -194,6 +224,9 @@ for valueSize in valueSizes:
         pmemkvLoadTemp = []
         pmemkvUpdateTemp = []
 
+        # Paper output
+        paperLoadTemp = []
+
         for attempt in range(0, 5):
             # Clean environment
             if os.path.isfile(poolPath):
@@ -214,6 +247,9 @@ for valueSize in valueSizes:
             # Parse PMEMKV output
             pmemkvLoadTemp.append(parsePMEMKVOutput(out))
 
+            # Parse PMEMKV output (paper)
+            paperLoadTemp.append(parseOutputForPaper(out))
+
             if runUpdatePhase == False:
                 continue
 
@@ -233,7 +269,7 @@ for valueSize in valueSizes:
             pmemkvUpdateTemp.append(parsePMEMKVOutput(out))
 
         # Check if results are accurate
-        for tempResult in [pmdkLoadTemp, pmdkUpdateTemp, pmemkvLoadTemp, pmemkvUpdateTemp]:
+        for tempResult in [pmdkLoadTemp, pmdkUpdateTemp, pmemkvLoadTemp, pmemkvUpdateTemp, paperLoadTemp]:
             if mustRepeat == True:
                 break
             # Only empty for update experiments iff runUpdatePhase is set to False
@@ -261,12 +297,14 @@ for valueSize in valueSizes:
 
         loadPMDK.append(computeAvg(pmdkLoadTemp))
         loadPMEMKV.append(computeAvg(pmemkvLoadTemp))
+        loadPaper.append(computeAvg(paperLoadTemp))
         if runUpdatePhase == True:
             updatePMDK.append(computeAvg(pmdkUpdateTemp))
             updatePMEMKV.append(computeAvg(pmemkvUpdateTemp))
 
 saveStackedPlot('PMDK - Load - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPMDK), legendsPMDK, 'pmdk-load.pdf')
 saveStackedPlot('PMEMKV - Load - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPMEMKV), legendsPMEMKV, 'pmemkv-load.pdf')
+saveStackedPlot('Latency breakdown of PMEMKV - STDEV < ' + str(maxThreshold), valueSizes, convertData(loadPaper), legendsPaper, 'pmemkv-latency-breakdown.pdf')
 if runUpdatePhase == True:
     saveStackedPlot('PMDK - Update - STDEV < ' + str(maxThreshold), valueSizes, convertData(updatePMDK), legendsPMDK, 'pmdk-update.pdf')
     saveStackedPlot('PMEMKV - Update - STDEV < ' + str(maxThreshold), valueSizes, convertData(updatePMEMKV), legendsPMEMKV, 'pmemkv-update.pdf')
